@@ -97,21 +97,21 @@ func (c *interceptConn) Read(b []byte) (int, error) {
 }
 
 func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote net.Conn)) {
-	local, remote := makeTCPConns(t)
+	clientConn, serverConn := makeTCPConns(t)
 
 	// Just to be sure both ends get closed. Also, it retains a reference so one side of the connection doesn't get
 	// garbage collected. This could happen when a test is testing against a non-responsive remote. Since it never
 	// uses remote it may be garbage collected leading to the connection being closed.
-	defer local.Close()
-	defer remote.Close()
+	defer clientConn.Close()
+	defer serverConn.Close()
 
 	var conn nbconn.Conn
-	netConn := nbconn.NewNetConn(local)
+	netConn := nbconn.NewNetConn(clientConn)
 
 	cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
 	require.NoError(t, err)
 
-	tlsServer := tls.Server(&interceptConn{remote}, &tls.Config{
+	tlsServer := tls.Server(&interceptConn{serverConn}, &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	})
 	serverTLSHandshakeChan := make(chan error)
@@ -126,13 +126,13 @@ func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote n
 
 	err = <-serverTLSHandshakeChan
 	require.NoError(t, err)
-	remote = tlsServer
+	serverConn = tlsServer
 
-	f(t, conn, remote)
+	f(t, conn, serverConn)
 }
 
 // makeTCPConns returns a connected pair of net.Conns running over TCP on localhost.
-func makeTCPConns(t *testing.T) (local, remote net.Conn) {
+func makeTCPConns(t *testing.T) (clientConn, serverConn net.Conn) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer ln.Close()
@@ -148,15 +148,15 @@ func makeTCPConns(t *testing.T) (local, remote net.Conn) {
 		acceptChan <- acceptResultT{conn: conn, err: err}
 	}()
 
-	local, err = net.Dial("tcp", ln.Addr().String())
+	clientConn, err = net.Dial("tcp", ln.Addr().String())
 	require.NoError(t, err)
 
 	acceptResult := <-acceptChan
 	require.NoError(t, acceptResult.err)
 
-	remote = acceptResult.conn
+	serverConn = acceptResult.conn
 
-	return local, remote
+	return clientConn, serverConn
 }
 
 // This test exercises the non-blocking write path. Because writes are buffered it is difficult trigger this with
