@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"dupreads/nbconn"
@@ -68,13 +69,19 @@ pz01y53wMSTJs0ocAxkYvUc5laF+vMsLpG2vp8f35w8uKuO7+vm5LAjUsPd099jG
 2qWm8jTPeDC3sq+67s2oojHf+Q==
 -----END TESTING KEY-----`, "TESTING KEY", "PRIVATE KEY"))
 
-type interceptConn struct {
+type recordedReadConn struct {
 	net.Conn
+
+	readLock sync.Mutex
+	readLog  bytes.Buffer
 }
 
 var logRead bytes.Buffer
 
-func (c *interceptConn) Read(b []byte) (int, error) {
+func (c *recordedReadConn) Read(b []byte) (int, error) {
+	c.readLock.Lock()
+	defer c.readLock.Unlock()
+
 	n, err := c.Conn.Read(b)
 
 	logRead.Write(b[:n])
@@ -96,6 +103,22 @@ func (c *interceptConn) Read(b []byte) (int, error) {
 	return n, err
 }
 
+type recordedWriteConn struct {
+	net.Conn
+
+	writeLock sync.Mutex
+	writeLog  bytes.Buffer
+}
+
+func (c *recordedWriteConn) Write(b []byte) (n int, err error) {
+	c.writeLock.Lock()
+	defer c.writeLock.Unlock()
+
+	n, err = c.Conn.Write(b)
+	c.writeLog.Write(b[:n])
+	return n, err
+}
+
 func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote net.Conn)) {
 	clientConn, serverConn := makeTCPConns(t)
 
@@ -111,7 +134,7 @@ func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote n
 	cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
 	require.NoError(t, err)
 
-	tlsServer := tls.Server(&interceptConn{serverConn}, &tls.Config{
+	tlsServer := tls.Server(&recordedReadConn{Conn: serverConn}, &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	})
 	serverTLSHandshakeChan := make(chan error)

@@ -69,7 +69,7 @@ type NetConn struct {
 	// https://github.com/jackc/pgx/issues/1307. Only access with atomics
 	closed int64 // 0 = not closed, 1 = closed
 
-	conn net.Conn
+	Conn net.Conn
 
 	readQueue  bufferQueue
 	writeQueue bufferQueue
@@ -87,7 +87,7 @@ type NetConn struct {
 
 func NewNetConn(conn net.Conn) *NetConn {
 	nc := &NetConn{
-		conn:                            conn,
+		Conn:                            conn,
 		fakeNonblockingReadWaitDuration: maxNonblockingReadWaitDuration,
 	}
 
@@ -138,7 +138,7 @@ func (c *NetConn) Read(b []byte) (n int, err error) {
 	if readNonblocking {
 		readN, err = c.nonblockingRead(b[n:])
 	} else {
-		readN, err = c.conn.Read(b[n:])
+		readN, err = c.Conn.Read(b[n:])
 	}
 	n += readN
 	return n, err
@@ -164,7 +164,7 @@ func (c *NetConn) Close() (err error) {
 	}
 
 	defer func() {
-		closeErr := c.conn.Close()
+		closeErr := c.Conn.Close()
 		if err == nil {
 			err = closeErr
 		}
@@ -181,11 +181,11 @@ func (c *NetConn) Close() (err error) {
 }
 
 func (c *NetConn) LocalAddr() net.Addr {
-	return c.conn.LocalAddr()
+	return c.Conn.LocalAddr()
 }
 
 func (c *NetConn) RemoteAddr() net.Addr {
-	return c.conn.RemoteAddr()
+	return c.Conn.RemoteAddr()
 }
 
 // SetDeadline is the equivalent of calling SetReadDealine(t) and SetWriteDeadline(t).
@@ -222,7 +222,7 @@ func (c *NetConn) SetReadDeadline(t time.Time) error {
 
 	c.readDeadline = t
 
-	return c.conn.SetReadDeadline(t)
+	return c.Conn.SetReadDeadline(t)
 }
 
 func (c *NetConn) SetWriteDeadline(t time.Time) error {
@@ -242,7 +242,7 @@ func (c *NetConn) SetWriteDeadline(t time.Time) error {
 
 	c.writeDeadline = t
 
-	return c.conn.SetWriteDeadline(t)
+	return c.Conn.SetWriteDeadline(t)
 }
 
 func (c *NetConn) Flush() error {
@@ -368,13 +368,13 @@ func (c *NetConn) nonblockingWrite(b []byte) (n int, err error) {
 
 	deadline := time.Now().Add(fakeNonblockingWriteWaitDuration)
 	if c.writeDeadline.IsZero() || deadline.Before(c.writeDeadline) {
-		err = c.conn.SetWriteDeadline(deadline)
+		err = c.Conn.SetWriteDeadline(deadline)
 		if err != nil {
 			return 0, err
 		}
 		defer func() {
 			// Ignoring error resetting deadline as there is nothing that can reasonably be done if it fails.
-			c.conn.SetWriteDeadline(c.writeDeadline)
+			c.Conn.SetWriteDeadline(c.writeDeadline)
 
 			if err != nil {
 				if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -384,7 +384,7 @@ func (c *NetConn) nonblockingWrite(b []byte) (n int, err error) {
 		}()
 	}
 
-	return c.conn.Write(b)
+	return c.Conn.Write(b)
 }
 
 func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
@@ -394,7 +394,7 @@ func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
 	startTime := time.Now()
 	deadline := startTime.Add(c.fakeNonblockingReadWaitDuration)
 	if c.readDeadline.IsZero() || deadline.Before(c.readDeadline) {
-		err = c.conn.SetReadDeadline(deadline)
+		err = c.Conn.SetReadDeadline(deadline)
 		if err != nil {
 			return 0, err
 		}
@@ -416,7 +416,7 @@ func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
 			}
 
 			// Ignoring error resetting deadline as there is nothing that can reasonably be done if it fails.
-			c.conn.SetReadDeadline(c.readDeadline)
+			c.Conn.SetReadDeadline(c.readDeadline)
 
 			if err != nil {
 				if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -426,7 +426,7 @@ func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
 		}()
 	}
 
-	return c.conn.Read(b)
+	return c.Conn.Read(b)
 }
 
 // TLSClient establishes a TLS connection as a client over conn using config.
