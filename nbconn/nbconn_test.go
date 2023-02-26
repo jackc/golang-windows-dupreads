@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -72,12 +73,10 @@ type recordedReadConn struct {
 	net.Conn
 
 	readLock sync.Mutex
-	readLog  bytes.Buffer
+	readLog  *bytes.Buffer
 
 	recordedWriteConn *recordedWriteConn
 }
-
-var logRead bytes.Buffer
 
 func (c *recordedReadConn) Read(b []byte) (int, error) {
 	c.readLock.Lock()
@@ -86,21 +85,26 @@ func (c *recordedReadConn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 	c.readLog.Write(b[:n])
 
-	// logRead.Write(b[:n])
-	// fmt.Println(logRead.Len(), nbconn.LogWritten.Len())
-	// for i := 0; i < logRead.Len(); i++ {
-	// 	if logRead.Bytes()[i] != nbconn.LogWritten.Bytes()[i] {
-	// 		fmt.Println("mismatch at", i)
-	// 		fmt.Println(logRead.Bytes()[i-20 : i+20])
-	// 		fmt.Println(nbconn.LogWritten.Bytes()[i-20 : i+20])
-	// 		fmt.Println(
-	// 			bytes.Contains(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
-	// 			bytes.Index(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
-	// 			i-bytes.Index(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
-	// 		)
-	// 		os.Exit(1)
-	// 	}
-	// }
+	c.recordedWriteConn.writeLock.Lock()
+	defer c.recordedWriteConn.writeLock.Unlock()
+
+	readLog := c.readLog
+	writeLog := c.recordedWriteConn.writeLog
+
+	fmt.Printf("readLog.Len(): %d, writeLog.Len(): %d\n", readLog.Len(), writeLog.Len())
+	for i := 0; i < readLog.Len(); i++ {
+		if readLog.Bytes()[i] != writeLog.Bytes()[i] {
+			fmt.Println("mismatch at", i)
+			fmt.Println(readLog.Bytes()[i-20 : i+20])
+			fmt.Println(writeLog.Bytes()[i-20 : i+20])
+			fmt.Println(
+				bytes.Contains(writeLog.Bytes(), readLog.Bytes()[i:i+10]),
+				bytes.Index(writeLog.Bytes(), readLog.Bytes()[i:i+10]),
+				i-bytes.Index(writeLog.Bytes(), readLog.Bytes()[i:i+10]),
+			)
+			os.Exit(1)
+		}
+	}
 
 	return n, err
 }
@@ -109,7 +113,7 @@ type recordedWriteConn struct {
 	net.Conn
 
 	writeLock sync.Mutex
-	writeLog  bytes.Buffer
+	writeLog  *bytes.Buffer
 }
 
 func (c *recordedWriteConn) Write(b []byte) (n int, err error) {
@@ -136,7 +140,7 @@ func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote n
 	cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
 	require.NoError(t, err)
 
-	tlsServer := tls.Server(&recordedReadConn{Conn: serverConn}, &tls.Config{
+	tlsServer := tls.Server(serverConn, &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	})
 	serverTLSHandshakeChan := make(chan error)
@@ -181,9 +185,9 @@ func makeTCPConns(t *testing.T) (clientConn, serverConn net.Conn) {
 
 	serverConn = acceptResult.conn
 
-	recordedWriteConn := &recordedWriteConn{Conn: clientConn}
+	recordedWriteConn := &recordedWriteConn{Conn: clientConn, writeLog: &bytes.Buffer{}}
 	clientConn = recordedWriteConn
-	serverConn = &recordedReadConn{Conn: serverConn, recordedWriteConn: recordedWriteConn}
+	serverConn = &recordedReadConn{Conn: serverConn, readLog: &bytes.Buffer{}, recordedWriteConn: recordedWriteConn}
 
 	return clientConn, serverConn
 }
@@ -218,15 +222,6 @@ func TestInternalNonBlockingWrite(t *testing.T) {
 
 			readBuf := make([]byte, deadlockSize)
 			_, err = io.ReadFull(remote, readBuf)
-
-			fmt.Println(logRead.Len(), nbconn.LogWritten.Len())
-			for i := 0; i < logRead.Len(); i++ {
-				if logRead.Bytes()[i] != nbconn.LogWritten.Bytes()[i] {
-					fmt.Println("mismatch at", i)
-					break
-				}
-			}
-
 			errChan <- err
 		}()
 

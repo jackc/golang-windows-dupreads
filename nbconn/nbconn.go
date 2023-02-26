@@ -11,10 +11,8 @@
 package nbconn
 
 import (
-	"bytes"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"os"
@@ -69,7 +67,7 @@ type NetConn struct {
 	// https://github.com/jackc/pgx/issues/1307. Only access with atomics
 	closed int64 // 0 = not closed, 1 = closed
 
-	Conn net.Conn
+	conn net.Conn
 
 	readQueue  bufferQueue
 	writeQueue bufferQueue
@@ -87,7 +85,7 @@ type NetConn struct {
 
 func NewNetConn(conn net.Conn) *NetConn {
 	nc := &NetConn{
-		Conn:                            conn,
+		conn:                            conn,
 		fakeNonblockingReadWaitDuration: maxNonblockingReadWaitDuration,
 	}
 
@@ -138,7 +136,7 @@ func (c *NetConn) Read(b []byte) (n int, err error) {
 	if readNonblocking {
 		readN, err = c.nonblockingRead(b[n:])
 	} else {
-		readN, err = c.Conn.Read(b[n:])
+		readN, err = c.conn.Read(b[n:])
 	}
 	n += readN
 	return n, err
@@ -164,7 +162,7 @@ func (c *NetConn) Close() (err error) {
 	}
 
 	defer func() {
-		closeErr := c.Conn.Close()
+		closeErr := c.conn.Close()
 		if err == nil {
 			err = closeErr
 		}
@@ -181,11 +179,11 @@ func (c *NetConn) Close() (err error) {
 }
 
 func (c *NetConn) LocalAddr() net.Addr {
-	return c.Conn.LocalAddr()
+	return c.conn.LocalAddr()
 }
 
 func (c *NetConn) RemoteAddr() net.Addr {
-	return c.Conn.RemoteAddr()
+	return c.conn.RemoteAddr()
 }
 
 // SetDeadline is the equivalent of calling SetReadDealine(t) and SetWriteDeadline(t).
@@ -222,7 +220,7 @@ func (c *NetConn) SetReadDeadline(t time.Time) error {
 
 	c.readDeadline = t
 
-	return c.Conn.SetReadDeadline(t)
+	return c.conn.SetReadDeadline(t)
 }
 
 func (c *NetConn) SetWriteDeadline(t time.Time) error {
@@ -242,7 +240,7 @@ func (c *NetConn) SetWriteDeadline(t time.Time) error {
 
 	c.writeDeadline = t
 
-	return c.Conn.SetWriteDeadline(t)
+	return c.conn.SetWriteDeadline(t)
 }
 
 func (c *NetConn) Flush() error {
@@ -254,8 +252,6 @@ func (c *NetConn) Flush() error {
 	defer c.readFlushLock.Unlock()
 	return c.flush()
 }
-
-var LogWritten bytes.Buffer
 
 // flush does the actual work of flushing the writeQueue. readFlushLock must already be held.
 func (c *NetConn) flush() error {
@@ -361,20 +357,15 @@ func (c *NetConn) nonblockingWrite(b []byte) (n int, err error) {
 	c.writeDeadlineLock.Lock()
 	defer c.writeDeadlineLock.Unlock()
 
-	defer func() {
-		LogWritten.Write(b[:n])
-		fmt.Println(n)
-	}()
-
 	deadline := time.Now().Add(fakeNonblockingWriteWaitDuration)
 	if c.writeDeadline.IsZero() || deadline.Before(c.writeDeadline) {
-		err = c.Conn.SetWriteDeadline(deadline)
+		err = c.conn.SetWriteDeadline(deadline)
 		if err != nil {
 			return 0, err
 		}
 		defer func() {
 			// Ignoring error resetting deadline as there is nothing that can reasonably be done if it fails.
-			c.Conn.SetWriteDeadline(c.writeDeadline)
+			c.conn.SetWriteDeadline(c.writeDeadline)
 
 			if err != nil {
 				if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -384,7 +375,7 @@ func (c *NetConn) nonblockingWrite(b []byte) (n int, err error) {
 		}()
 	}
 
-	return c.Conn.Write(b)
+	return c.conn.Write(b)
 }
 
 func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
@@ -394,7 +385,7 @@ func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
 	startTime := time.Now()
 	deadline := startTime.Add(c.fakeNonblockingReadWaitDuration)
 	if c.readDeadline.IsZero() || deadline.Before(c.readDeadline) {
-		err = c.Conn.SetReadDeadline(deadline)
+		err = c.conn.SetReadDeadline(deadline)
 		if err != nil {
 			return 0, err
 		}
@@ -416,7 +407,7 @@ func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
 			}
 
 			// Ignoring error resetting deadline as there is nothing that can reasonably be done if it fails.
-			c.Conn.SetReadDeadline(c.readDeadline)
+			c.conn.SetReadDeadline(c.readDeadline)
 
 			if err != nil {
 				if errors.Is(err, os.ErrDeadlineExceeded) {
@@ -426,7 +417,7 @@ func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
 		}()
 	}
 
-	return c.Conn.Read(b)
+	return c.conn.Read(b)
 }
 
 // TLSClient establishes a TLS connection as a client over conn using config.
