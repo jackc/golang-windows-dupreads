@@ -106,7 +106,7 @@ func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote n
 	defer remote.Close()
 
 	var conn nbconn.Conn
-	netConn := nbconn.NewNetConn(local, true)
+	netConn := nbconn.NewNetConn(local)
 
 	cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
 	require.NoError(t, err)

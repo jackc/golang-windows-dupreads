@@ -20,7 +20,6 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"dupreads/iobufpool"
@@ -70,26 +69,12 @@ type NetConn struct {
 	// https://github.com/jackc/pgx/issues/1307. Only access with atomics
 	closed int64 // 0 = not closed, 1 = closed
 
-	conn    net.Conn
-	rawConn syscall.RawConn
+	conn net.Conn
 
 	readQueue  bufferQueue
 	writeQueue bufferQueue
 
 	readFlushLock sync.Mutex
-	// non-blocking writes with syscall.RawConn are done with a callback function. By using these fields instead of the
-	// callback functions closure to pass the buf argument and receive the n and err results we avoid some allocations.
-	nonblockWriteFunc func(fd uintptr) (done bool)
-	nonblockWriteBuf  []byte
-	nonblockWriteErr  error
-	nonblockWriteN    int
-
-	// non-blocking reads with syscall.RawConn are done with a callback function. By using these fields instead of the
-	// callback functions closure to pass the buf argument and receive the n and err results we avoid some allocations.
-	nonblockReadFunc func(fd uintptr) (done bool)
-	nonblockReadBuf  []byte
-	nonblockReadErr  error
-	nonblockReadN    int
 
 	readDeadlineLock                sync.Mutex
 	readDeadline                    time.Time
@@ -101,18 +86,10 @@ type NetConn struct {
 	writeDeadline     time.Time
 }
 
-func NewNetConn(conn net.Conn, fakeNonBlockingIO bool) *NetConn {
+func NewNetConn(conn net.Conn) *NetConn {
 	nc := &NetConn{
 		conn:                            conn,
 		fakeNonblockingReadWaitDuration: maxNonblockingReadWaitDuration,
-	}
-
-	if !fakeNonBlockingIO {
-		if sc, ok := conn.(syscall.Conn); ok {
-			if rawConn, err := sc.SyscallConn(); err == nil {
-				nc.rawConn = rawConn
-			}
-		}
 	}
 
 	return nc
