@@ -203,47 +203,84 @@ func makeRecordedConns(w, r net.Conn) (*recordedWriteConn, *recordedReadConn) {
 	return recordedWriteConn, recordedReadConn
 }
 
+func makeTSLConnection(clientConn, serverConn net.Conn) (clientTLSConn, serverTLSConn net.Conn, err error) {
+	netConn := nbconn.NewNetConn(clientConn)
+
+	cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tlsServer := tls.Server(serverConn, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	})
+	serverTLSHandshakeChan := make(chan error)
+	go func() {
+		err := tlsServer.Handshake()
+		serverTLSHandshakeChan <- err
+	}()
+
+	nbconnTLSConn, err := nbconn.TLSClient(netConn, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = <-serverTLSHandshakeChan
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return nbconnTLSConn, tlsServer, nil
+}
+
 // This test exercises the non-blocking write path. Because writes are buffered it is difficult trigger this with
 // certainty and visibility. So this test tries to trigger what would otherwise be a deadlock by both sides writing
 // large values.
 func TestInternalNonBlockingWrite(t *testing.T) {
+	// Make a connected pair of TCP connections.
+	tcpClientConn, tcpServerConn, err := makeTCPConns()
+	require.NoError(t, err)
+
+	// Wrap the connections in recording connections.
+	recordedClientConn, recordedServerConn := makeRecordedConns(tcpClientConn, tcpServerConn)
+
+	// Establish a TLS connection from the client to the server.
+	clientConn, serverConn, err := makeTSLConnection(recordedClientConn, recordedServerConn)
+	require.NoError(t, err)
+	defer clientConn.Close()
+	defer serverConn.Close()
+
 	const deadlockSize = 4 * 1024 * 1024
-	// const deadlockSize = 2762135
-	// const deadlockSize = 3001720
+	writeBuf := make([]byte, deadlockSize)
+	for i := range writeBuf {
+		writeBuf[i] = 1
+	}
+	n, err := clientConn.Write(writeBuf)
+	require.NoError(t, err)
+	require.EqualValues(t, deadlockSize, n)
 
-	testVariants(t, func(t *testing.T, conn nbconn.Conn, remote net.Conn) {
-		writeBuf := make([]byte, deadlockSize)
-		for i := range writeBuf {
-			writeBuf[i] = 1
-		}
-		n, err := conn.Write(writeBuf)
-		require.NoError(t, err)
-		require.EqualValues(t, deadlockSize, n)
-
-		errChan := make(chan error, 1)
-		go func() {
-			remoteWriteBuf := make([]byte, deadlockSize)
-			_, err := remote.Write(remoteWriteBuf)
-			if err != nil {
-				errChan <- err
-				return
-			}
-
-			fmt.Println("after remote write")
-
-			readBuf := make([]byte, deadlockSize)
-			_, err = io.ReadFull(remote, readBuf)
+	errChan := make(chan error, 1)
+	go func() {
+		remoteWriteBuf := make([]byte, deadlockSize)
+		_, err := serverConn.Write(remoteWriteBuf)
+		if err != nil {
 			errChan <- err
-		}()
+			return
+		}
+
+		fmt.Println("after remote write")
 
 		readBuf := make([]byte, deadlockSize)
-		_, err = io.ReadFull(conn, readBuf)
-		require.NoError(t, err)
+		_, err = io.ReadFull(serverConn, readBuf)
+		errChan <- err
+	}()
 
-		require.NoError(t, <-errChan)
+	readBuf := make([]byte, deadlockSize)
+	_, err = io.ReadFull(clientConn, readBuf)
+	require.NoError(t, err)
 
-		err = conn.Close()
-		require.NoError(t, err)
+	require.NoError(t, <-errChan)
 
-	})
+	err = clientConn.Close()
+	require.NoError(t, err)
 }
