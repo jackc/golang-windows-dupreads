@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +73,8 @@ type recordedReadConn struct {
 
 	readLock sync.Mutex
 	readLog  bytes.Buffer
+
+	recordedWriteConn *recordedWriteConn
 }
 
 var logRead bytes.Buffer
@@ -83,22 +84,23 @@ func (c *recordedReadConn) Read(b []byte) (int, error) {
 	defer c.readLock.Unlock()
 
 	n, err := c.Conn.Read(b)
+	c.readLog.Write(b[:n])
 
-	logRead.Write(b[:n])
-	fmt.Println(logRead.Len(), nbconn.LogWritten.Len())
-	for i := 0; i < logRead.Len(); i++ {
-		if logRead.Bytes()[i] != nbconn.LogWritten.Bytes()[i] {
-			fmt.Println("mismatch at", i)
-			fmt.Println(logRead.Bytes()[i-20 : i+20])
-			fmt.Println(nbconn.LogWritten.Bytes()[i-20 : i+20])
-			fmt.Println(
-				bytes.Contains(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
-				bytes.Index(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
-				i-bytes.Index(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
-			)
-			os.Exit(1)
-		}
-	}
+	// logRead.Write(b[:n])
+	// fmt.Println(logRead.Len(), nbconn.LogWritten.Len())
+	// for i := 0; i < logRead.Len(); i++ {
+	// 	if logRead.Bytes()[i] != nbconn.LogWritten.Bytes()[i] {
+	// 		fmt.Println("mismatch at", i)
+	// 		fmt.Println(logRead.Bytes()[i-20 : i+20])
+	// 		fmt.Println(nbconn.LogWritten.Bytes()[i-20 : i+20])
+	// 		fmt.Println(
+	// 			bytes.Contains(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
+	// 			bytes.Index(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
+	// 			i-bytes.Index(nbconn.LogWritten.Bytes(), logRead.Bytes()[i:i+10]),
+	// 		)
+	// 		os.Exit(1)
+	// 	}
+	// }
 
 	return n, err
 }
@@ -178,6 +180,10 @@ func makeTCPConns(t *testing.T) (clientConn, serverConn net.Conn) {
 	require.NoError(t, acceptResult.err)
 
 	serverConn = acceptResult.conn
+
+	recordedWriteConn := &recordedWriteConn{Conn: clientConn}
+	clientConn = recordedWriteConn
+	serverConn = &recordedReadConn{Conn: serverConn, recordedWriteConn: recordedWriteConn}
 
 	return clientConn, serverConn
 }
