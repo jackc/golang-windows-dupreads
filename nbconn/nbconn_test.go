@@ -126,7 +126,10 @@ func (c *recordedWriteConn) Write(b []byte) (n int, err error) {
 }
 
 func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote net.Conn)) {
-	clientConn, serverConn := makeTCPConns(t)
+	clientConn, serverConn, err := makeTCPConns()
+	require.NoError(t, err)
+
+	clientConn, serverConn = makeRecordedConns(clientConn, serverConn)
 
 	// Just to be sure both ends get closed. Also, it retains a reference so one side of the connection doesn't get
 	// garbage collected. This could happen when a test is testing against a non-responsive remote. Since it never
@@ -161,9 +164,11 @@ func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote n
 }
 
 // makeTCPConns returns a connected pair of net.Conns running over TCP on localhost.
-func makeTCPConns(t *testing.T) (clientConn, serverConn net.Conn) {
+func makeTCPConns() (clientConn, serverConn net.Conn, err error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	if err != nil {
+		return nil, nil, err
+	}
 	defer ln.Close()
 
 	type acceptResultT struct {
@@ -178,18 +183,24 @@ func makeTCPConns(t *testing.T) (clientConn, serverConn net.Conn) {
 	}()
 
 	clientConn, err = net.Dial("tcp", ln.Addr().String())
-	require.NoError(t, err)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	acceptResult := <-acceptChan
-	require.NoError(t, acceptResult.err)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	serverConn = acceptResult.conn
 
-	recordedWriteConn := &recordedWriteConn{Conn: clientConn, writeLog: &bytes.Buffer{}}
-	clientConn = recordedWriteConn
-	serverConn = &recordedReadConn{Conn: serverConn, readLog: &bytes.Buffer{}, recordedWriteConn: recordedWriteConn}
+	return clientConn, serverConn, nil
+}
 
-	return clientConn, serverConn
+func makeRecordedConns(w, r net.Conn) (*recordedWriteConn, *recordedReadConn) {
+	recordedWriteConn := &recordedWriteConn{Conn: w, writeLog: &bytes.Buffer{}}
+	recordedReadConn := &recordedReadConn{Conn: r, readLog: &bytes.Buffer{}, recordedWriteConn: recordedWriteConn}
+	return recordedWriteConn, recordedReadConn
 }
 
 // This test exercises the non-blocking write path. Because writes are buffered it is difficult trigger this with
