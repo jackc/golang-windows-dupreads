@@ -381,11 +381,7 @@ func (c *NetConn) nonblockingWrite(b []byte) (n int, err error) {
 	if rand.Float32() > 0.9 {
 		// return 0, ErrWouldBlock
 	}
-	if c.rawConn == nil {
-		return c.fakeNonblockingWrite(b)
-	} else {
-		return c.realNonblockingWrite(b)
-	}
+	return c.fakeNonblockingWrite(b)
 }
 
 func (c *NetConn) fakeNonblockingWrite(b []byte) (n int, err error) {
@@ -419,11 +415,7 @@ func (c *NetConn) fakeNonblockingWrite(b []byte) (n int, err error) {
 }
 
 func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
-	if c.rawConn == nil {
-		return c.fakeNonblockingRead(b)
-	} else {
-		return c.realNonblockingRead(b)
-	}
+	return c.fakeNonblockingRead(b)
 }
 
 func (c *NetConn) fakeNonblockingRead(b []byte) (n int, err error) {
