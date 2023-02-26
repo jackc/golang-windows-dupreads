@@ -97,94 +97,38 @@ func (c *interceptConn) Read(b []byte) (int, error) {
 }
 
 func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote net.Conn)) {
-	for _, tt := range []struct {
-		name              string
-		makeConns         func(t *testing.T) (local, remote net.Conn)
-		useTLS            bool
-		fakeNonBlockingIO bool
-	}{
-		// {
-		// 	name:              "Pipe",
-		// 	makeConns:         makePipeConns,
-		// 	useTLS:            false,
-		// 	fakeNonBlockingIO: true,
-		// },
-		// {
-		// 	name:              "TCP with Fake Non-blocking IO",
-		// 	makeConns:         makeTCPConns,
-		// 	useTLS:            false,
-		// 	fakeNonBlockingIO: true,
-		// },
-		{
-			name:              "TLS over TCP with Fake Non-blocking IO",
-			makeConns:         makeTCPConns,
-			useTLS:            true,
-			fakeNonBlockingIO: true,
-		},
-		// {
-		// 	name:              "TCP with Real Non-blocking IO",
-		// 	makeConns:         makeTCPConns,
-		// 	useTLS:            false,
-		// 	fakeNonBlockingIO: false,
-		// },
-		// {
-		// 	name:              "TLS over TCP with Real Non-blocking IO",
-		// 	makeConns:         makeTCPConns,
-		// 	useTLS:            true,
-		// 	fakeNonBlockingIO: false,
-		// },
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			local, remote := tt.makeConns(t)
+	local, remote := makeTCPConns(t)
 
-			// Just to be sure both ends get closed. Also, it retains a reference so one side of the connection doesn't get
-			// garbage collected. This could happen when a test is testing against a non-responsive remote. Since it never
-			// uses remote it may be garbage collected leading to the connection being closed.
-			defer local.Close()
-			defer remote.Close()
+	// Just to be sure both ends get closed. Also, it retains a reference so one side of the connection doesn't get
+	// garbage collected. This could happen when a test is testing against a non-responsive remote. Since it never
+	// uses remote it may be garbage collected leading to the connection being closed.
+	defer local.Close()
+	defer remote.Close()
 
-			var conn nbconn.Conn
-			netConn := nbconn.NewNetConn(local, tt.fakeNonBlockingIO)
+	var conn nbconn.Conn
+	netConn := nbconn.NewNetConn(local, true)
 
-			if tt.useTLS {
-				cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
-				require.NoError(t, err)
+	cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
+	require.NoError(t, err)
 
-				tlsServer := tls.Server(&interceptConn{remote}, &tls.Config{
-					Certificates: []tls.Certificate{cert},
-				})
-				serverTLSHandshakeChan := make(chan error)
-				go func() {
-					err := tlsServer.Handshake()
-					serverTLSHandshakeChan <- err
-				}()
-
-				tlsConn, err := nbconn.TLSClient(netConn, &tls.Config{InsecureSkipVerify: true})
-				require.NoError(t, err)
-				conn = tlsConn
-
-				err = <-serverTLSHandshakeChan
-				require.NoError(t, err)
-				remote = tlsServer
-			} else {
-				conn = netConn
-			}
-
-			f(t, conn, remote)
-		})
-	}
-}
-
-// makePipeConns returns a connected pair of net.Conns created with net.Pipe(). It is entirely synchronous so it is
-// useful for testing an exact sequence of reads and writes with the underlying connection blocking.
-func makePipeConns(t *testing.T) (local, remote net.Conn) {
-	local, remote = net.Pipe()
-	t.Cleanup(func() {
-		local.Close()
-		remote.Close()
+	tlsServer := tls.Server(&interceptConn{remote}, &tls.Config{
+		Certificates: []tls.Certificate{cert},
 	})
+	serverTLSHandshakeChan := make(chan error)
+	go func() {
+		err := tlsServer.Handshake()
+		serverTLSHandshakeChan <- err
+	}()
 
-	return local, remote
+	tlsConn, err := nbconn.TLSClient(netConn, &tls.Config{InsecureSkipVerify: true})
+	require.NoError(t, err)
+	conn = tlsConn
+
+	err = <-serverTLSHandshakeChan
+	require.NoError(t, err)
+	remote = tlsServer
+
+	f(t, conn, remote)
 }
 
 // makeTCPConns returns a connected pair of net.Conns running over TCP on localhost.
