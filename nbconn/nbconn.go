@@ -357,10 +357,7 @@ func (c *NetConn) nonblockingWrite(b []byte) (n int, err error) {
 	if rand.Float32() > 0.9 {
 		// return 0, ErrWouldBlock
 	}
-	return c.fakeNonblockingWrite(b)
-}
 
-func (c *NetConn) fakeNonblockingWrite(b []byte) (n int, err error) {
 	c.writeDeadlineLock.Lock()
 	defer c.writeDeadlineLock.Unlock()
 
@@ -391,10 +388,6 @@ func (c *NetConn) fakeNonblockingWrite(b []byte) (n int, err error) {
 }
 
 func (c *NetConn) nonblockingRead(b []byte) (n int, err error) {
-	return c.fakeNonblockingRead(b)
-}
-
-func (c *NetConn) fakeNonblockingRead(b []byte) (n int, err error) {
 	c.readDeadlineLock.Lock()
 	defer c.readDeadlineLock.Unlock()
 
@@ -435,8 +428,6 @@ func (c *NetConn) fakeNonblockingRead(b []byte) (n int, err error) {
 
 	return c.conn.Read(b)
 }
-
-// syscall.Conn is interface
 
 // TLSClient establishes a TLS connection as a client over conn using config.
 //
