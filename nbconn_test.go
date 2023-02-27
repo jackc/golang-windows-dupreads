@@ -185,20 +185,11 @@ func TestRepeatedMessage(t *testing.T) {
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// This message size should be large enough to block a Write until the other side Reads some of it.
+	// This message size should be large enough to block a Write until the other side Reads some of it. Both the server
+	// and the client try to Write a large message without reading.
 	const messageSize = 4 * 1024 * 1024
 
-	// This Write will always succeed due to the nbconn wrapper buffering all writes. This is necessary to prevent the
-	// TLS connection from being broken by a temporarily failing write.
-	writeBuf := make([]byte, messageSize)
-	n, err := clientConn.Write(writeBuf)
-	if err != nil {
-		t.Errorf("clientConn.Write failed: %v", err)
-	}
-	if messageSize != n {
-		t.Errorf("clientConn.Write wrote wrong number of bytes: %d instead of %d", n, messageSize)
-	}
-
+	// The server writes a large message before reading.
 	errChan := make(chan error, 1)
 	go func() {
 		remoteWriteBuf := make([]byte, messageSize)
@@ -212,6 +203,17 @@ func TestRepeatedMessage(t *testing.T) {
 		_, err = io.ReadFull(serverConn, readBuf)
 		errChan <- err
 	}()
+
+	// This Write will always succeed due to the nbconn wrapper buffering all writes. This is necessary to prevent the
+	// TLS connection from being broken by a temporarily failing write.
+	writeBuf := make([]byte, messageSize)
+	n, err := clientConn.Write(writeBuf)
+	if err != nil {
+		t.Errorf("clientConn.Write failed: %v", err)
+	}
+	if messageSize != n {
+		t.Errorf("clientConn.Write wrote wrong number of bytes: %d instead of %d", n, messageSize)
+	}
 
 	readBuf := make([]byte, messageSize)
 	// This Read is what will actually flush the previous Write. Since the server goroutine above also writes a large
