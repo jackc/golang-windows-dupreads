@@ -12,8 +12,6 @@ import (
 	"testing"
 
 	"dupreads/nbconn"
-
-	"github.com/stretchr/testify/require"
 )
 
 // Test keys generated with:
@@ -125,44 +123,6 @@ func (c *recordedWriteConn) Write(b []byte) (n int, err error) {
 	return n, err
 }
 
-func testVariants(t *testing.T, f func(t *testing.T, local nbconn.Conn, remote net.Conn)) {
-	clientConn, serverConn, err := makeTCPConns()
-	require.NoError(t, err)
-
-	clientConn, serverConn = makeRecordedConns(clientConn, serverConn)
-
-	// Just to be sure both ends get closed. Also, it retains a reference so one side of the connection doesn't get
-	// garbage collected. This could happen when a test is testing against a non-responsive remote. Since it never
-	// uses remote it may be garbage collected leading to the connection being closed.
-	defer clientConn.Close()
-	defer serverConn.Close()
-
-	var conn nbconn.Conn
-	netConn := nbconn.NewNetConn(clientConn)
-
-	cert, err := tls.X509KeyPair(testTLSPublicKey, testTLSPrivateKey)
-	require.NoError(t, err)
-
-	tlsServer := tls.Server(serverConn, &tls.Config{
-		Certificates: []tls.Certificate{cert},
-	})
-	serverTLSHandshakeChan := make(chan error)
-	go func() {
-		err := tlsServer.Handshake()
-		serverTLSHandshakeChan <- err
-	}()
-
-	tlsConn, err := nbconn.TLSClient(netConn, &tls.Config{InsecureSkipVerify: true})
-	require.NoError(t, err)
-	conn = tlsConn
-
-	err = <-serverTLSHandshakeChan
-	require.NoError(t, err)
-	serverConn = tlsServer
-
-	f(t, conn, serverConn)
-}
-
 // makeTCPConns returns a connected pair of net.Conns running over TCP on localhost.
 func makeTCPConns() (clientConn, serverConn net.Conn, err error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -239,14 +199,18 @@ func makeTSLConnection(clientConn, serverConn net.Conn) (clientTLSConn, serverTL
 func TestInternalNonBlockingWrite(t *testing.T) {
 	// Make a connected pair of TCP connections.
 	tcpClientConn, tcpServerConn, err := makeTCPConns()
-	require.NoError(t, err)
+	if err != nil {
+		t.Errorf("makeTCPConns failed: %v", err)
+	}
 
 	// Wrap the connections in recording connections.
 	recordedClientConn, recordedServerConn := makeRecordedConns(tcpClientConn, tcpServerConn)
 
 	// Establish a TLS connection from the client to the server.
 	clientConn, serverConn, err := makeTSLConnection(recordedClientConn, recordedServerConn)
-	require.NoError(t, err)
+	if err != nil {
+		t.Errorf("makeTLSConnection failed: %v", err)
+	}
 	defer clientConn.Close()
 	defer serverConn.Close()
 
@@ -256,8 +220,12 @@ func TestInternalNonBlockingWrite(t *testing.T) {
 		writeBuf[i] = 1
 	}
 	n, err := clientConn.Write(writeBuf)
-	require.NoError(t, err)
-	require.EqualValues(t, deadlockSize, n)
+	if err != nil {
+		t.Errorf("clientConn.Write failed: %v", err)
+	}
+	if deadlockSize != n {
+		t.Errorf("clientConn.Write wrote wrong number of bytes: %d instead of %d", n, deadlockSize)
+	}
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -277,10 +245,12 @@ func TestInternalNonBlockingWrite(t *testing.T) {
 
 	readBuf := make([]byte, deadlockSize)
 	_, err = io.ReadFull(clientConn, readBuf)
-	require.NoError(t, err)
+	if err != nil {
+		t.Errorf("io.ReadFull(clientConn, readBuf) failed: %v", err)
+	}
 
-	require.NoError(t, <-errChan)
-
-	err = clientConn.Close()
-	require.NoError(t, err)
+	err = <-errChan
+	if err != nil {
+		t.Errorf("serverConn goroutine encountered an error: %v", err)
+	}
 }
