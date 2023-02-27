@@ -3,7 +3,6 @@ package nbconn_test
 import (
 	"bytes"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -207,8 +206,6 @@ func TestRepeatedMessage(t *testing.T) {
 			errChan <- err
 			return
 		}
-
-		fmt.Println("after remote write")
 
 		readBuf := make([]byte, messageSize)
 		_, err = io.ReadFull(serverConn, readBuf)
