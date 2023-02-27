@@ -185,7 +185,11 @@ func TestRepeatedMessage(t *testing.T) {
 	defer clientConn.Close()
 	defer serverConn.Close()
 
+	// This message size should be large enough to block a Write until the other side Reads some of it.
 	const messageSize = 4 * 1024 * 1024
+
+	// This Write will always succeed due to the nbconn wrapper buffering all writes. This is necessary to prevent the
+	// TLS connection from being broken by a temporarily failing write.
 	writeBuf := make([]byte, messageSize)
 	n, err := clientConn.Write(writeBuf)
 	if err != nil {
@@ -210,6 +214,9 @@ func TestRepeatedMessage(t *testing.T) {
 	}()
 
 	readBuf := make([]byte, messageSize)
+	// This Read is what will actually flush the previous Write. Since the server goroutine above also writes a large
+	// message before reading this means that both sides are writing enough bytes to block until the other side reads.
+	// This will deadlock unless the internal non-blocking and buffering logic is working.
 	_, err = io.ReadFull(clientConn, readBuf)
 	if err != nil {
 		t.Errorf("io.ReadFull(clientConn, readBuf) failed: %v", err)
@@ -220,6 +227,7 @@ func TestRepeatedMessage(t *testing.T) {
 		t.Errorf("serverConn goroutine encountered an error: %v", err)
 	}
 
+	// Now compare what was written by the client connection and what was read by the server connection.
 	recordedServerConn.readLock.Lock()
 	defer recordedServerConn.readLock.Unlock()
 	readLog := recordedServerConn.readLog
