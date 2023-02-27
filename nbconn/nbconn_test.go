@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -67,62 +66,6 @@ pz01y53wMSTJs0ocAxkYvUc5laF+vMsLpG2vp8f35w8uKuO7+vm5LAjUsPd099jG
 2qWm8jTPeDC3sq+67s2oojHf+Q==
 -----END TESTING KEY-----`, "TESTING KEY", "PRIVATE KEY"))
 
-type recordedReadConn struct {
-	net.Conn
-
-	readLock sync.Mutex
-	readLog  *bytes.Buffer
-
-	recordedWriteConn *recordedWriteConn
-}
-
-func (c *recordedReadConn) Read(b []byte) (int, error) {
-	c.readLock.Lock()
-	defer c.readLock.Unlock()
-
-	n, err := c.Conn.Read(b)
-	c.readLog.Write(b[:n])
-
-	c.recordedWriteConn.writeLock.Lock()
-	defer c.recordedWriteConn.writeLock.Unlock()
-
-	readLog := c.readLog
-	writeLog := c.recordedWriteConn.writeLog
-
-	fmt.Printf("readLog.Len(): %d, writeLog.Len(): %d\n", readLog.Len(), writeLog.Len())
-	for i := 0; i < readLog.Len(); i++ {
-		if readLog.Bytes()[i] != writeLog.Bytes()[i] {
-			fmt.Println("mismatch at", i)
-			fmt.Println(readLog.Bytes()[i-20 : i+20])
-			fmt.Println(writeLog.Bytes()[i-20 : i+20])
-			fmt.Println(
-				bytes.Contains(writeLog.Bytes(), readLog.Bytes()[i:i+10]),
-				bytes.Index(writeLog.Bytes(), readLog.Bytes()[i:i+10]),
-				i-bytes.Index(writeLog.Bytes(), readLog.Bytes()[i:i+10]),
-			)
-			os.Exit(1)
-		}
-	}
-
-	return n, err
-}
-
-type recordedWriteConn struct {
-	net.Conn
-
-	writeLock sync.Mutex
-	writeLog  *bytes.Buffer
-}
-
-func (c *recordedWriteConn) Write(b []byte) (n int, err error) {
-	c.writeLock.Lock()
-	defer c.writeLock.Unlock()
-
-	n, err = c.Conn.Write(b)
-	c.writeLog.Write(b[:n])
-	return n, err
-}
-
 // makeTCPConns returns a connected pair of net.Conns running over TCP on localhost.
 func makeTCPConns() (clientConn, serverConn net.Conn, err error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -159,8 +102,40 @@ func makeTCPConns() (clientConn, serverConn net.Conn, err error) {
 
 func makeRecordedConns(w, r net.Conn) (*recordedWriteConn, *recordedReadConn) {
 	recordedWriteConn := &recordedWriteConn{Conn: w, writeLog: &bytes.Buffer{}}
-	recordedReadConn := &recordedReadConn{Conn: r, readLog: &bytes.Buffer{}, recordedWriteConn: recordedWriteConn}
+	recordedReadConn := &recordedReadConn{Conn: r, readLog: &bytes.Buffer{}}
 	return recordedWriteConn, recordedReadConn
+}
+
+type recordedReadConn struct {
+	net.Conn
+
+	readLock sync.Mutex
+	readLog  *bytes.Buffer
+}
+
+func (c *recordedReadConn) Read(b []byte) (int, error) {
+	c.readLock.Lock()
+	defer c.readLock.Unlock()
+
+	n, err := c.Conn.Read(b)
+	c.readLog.Write(b[:n])
+	return n, err
+}
+
+type recordedWriteConn struct {
+	net.Conn
+
+	writeLock sync.Mutex
+	writeLog  *bytes.Buffer
+}
+
+func (c *recordedWriteConn) Write(b []byte) (n int, err error) {
+	c.writeLock.Lock()
+	defer c.writeLock.Unlock()
+
+	n, err = c.Conn.Write(b)
+	c.writeLog.Write(b[:n])
+	return n, err
 }
 
 func makeTSLConnection(clientConn, serverConn net.Conn) (clientTLSConn, serverTLSConn net.Conn, err error) {
@@ -193,10 +168,7 @@ func makeTSLConnection(clientConn, serverConn net.Conn) (clientTLSConn, serverTL
 	return nbconnTLSConn, tlsServer, nil
 }
 
-// This test exercises the non-blocking write path. Because writes are buffered it is difficult trigger this with
-// certainty and visibility. So this test tries to trigger what would otherwise be a deadlock by both sides writing
-// large values.
-func TestInternalNonBlockingWrite(t *testing.T) {
+func TestRepeatedMessage(t *testing.T) {
 	// Make a connected pair of TCP connections.
 	tcpClientConn, tcpServerConn, err := makeTCPConns()
 	if err != nil {
@@ -214,8 +186,8 @@ func TestInternalNonBlockingWrite(t *testing.T) {
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	const deadlockSize = 4 * 1024 * 1024
-	writeBuf := make([]byte, deadlockSize)
+	const messageSize = 4 * 1024 * 1024
+	writeBuf := make([]byte, messageSize)
 	for i := range writeBuf {
 		writeBuf[i] = 1
 	}
@@ -223,13 +195,13 @@ func TestInternalNonBlockingWrite(t *testing.T) {
 	if err != nil {
 		t.Errorf("clientConn.Write failed: %v", err)
 	}
-	if deadlockSize != n {
-		t.Errorf("clientConn.Write wrote wrong number of bytes: %d instead of %d", n, deadlockSize)
+	if messageSize != n {
+		t.Errorf("clientConn.Write wrote wrong number of bytes: %d instead of %d", n, messageSize)
 	}
 
 	errChan := make(chan error, 1)
 	go func() {
-		remoteWriteBuf := make([]byte, deadlockSize)
+		remoteWriteBuf := make([]byte, messageSize)
 		_, err := serverConn.Write(remoteWriteBuf)
 		if err != nil {
 			errChan <- err
@@ -238,12 +210,12 @@ func TestInternalNonBlockingWrite(t *testing.T) {
 
 		fmt.Println("after remote write")
 
-		readBuf := make([]byte, deadlockSize)
+		readBuf := make([]byte, messageSize)
 		_, err = io.ReadFull(serverConn, readBuf)
 		errChan <- err
 	}()
 
-	readBuf := make([]byte, deadlockSize)
+	readBuf := make([]byte, messageSize)
 	_, err = io.ReadFull(clientConn, readBuf)
 	if err != nil {
 		t.Errorf("io.ReadFull(clientConn, readBuf) failed: %v", err)
@@ -252,5 +224,30 @@ func TestInternalNonBlockingWrite(t *testing.T) {
 	err = <-errChan
 	if err != nil {
 		t.Errorf("serverConn goroutine encountered an error: %v", err)
+	}
+
+	recordedServerConn.readLock.Lock()
+	defer recordedServerConn.readLock.Unlock()
+	readLog := recordedServerConn.readLog
+
+	recordedClientConn.writeLock.Lock()
+	defer recordedClientConn.writeLock.Unlock()
+	writeLog := recordedClientConn.writeLog
+
+	if readLog.Len() != writeLog.Len() {
+		t.Errorf("readLog.Len(): %d, writeLog.Len(): %d\n", readLog.Len(), writeLog.Len())
+	}
+
+	for i := 0; i < readLog.Len(); i++ {
+		if readLog.Bytes()[i] != writeLog.Bytes()[i] {
+			t.Errorf("mismatch at: %d", i)
+			t.Logf("readLog.Bytes()[i-20 : i+20]  %v", readLog.Bytes()[i-20:i+20])
+			t.Logf("writeLog.Bytes()[i-20 : i+20] %v", writeLog.Bytes()[i-20:i+20])
+			firstOccuranceOfMismatchDataIndex := bytes.Index(writeLog.Bytes(), readLog.Bytes()[i:i+10])
+			if firstOccuranceOfMismatchDataIndex < i {
+				t.Logf("mismatch data appears earlier in stream at %d which is %d bytes earlier", firstOccuranceOfMismatchDataIndex, i-firstOccuranceOfMismatchDataIndex)
+			}
+			break
+		}
 	}
 }
