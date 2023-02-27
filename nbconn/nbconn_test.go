@@ -243,7 +243,7 @@ func TestRepeatedMessage(t *testing.T) {
 			t.Errorf("mismatch at: %d", i)
 			t.Logf("readLog.Bytes()[i-20 : i+20]  %v", readLog.Bytes()[i-20:i+20])
 			t.Logf("writeLog.Bytes()[i-20 : i+20] %v", writeLog.Bytes()[i-20:i+20])
-			firstOccuranceOfMismatchDataIndex := bytes.Index(writeLog.Bytes(), readLog.Bytes()[i:i+10])
+			firstOccuranceOfMismatchDataIndex := bytes.Index(writeLog.Bytes(), readLog.Bytes()[i:i+100])
 			if firstOccuranceOfMismatchDataIndex < i {
 				t.Logf("mismatch data appears earlier in stream at %d which is %d bytes earlier", firstOccuranceOfMismatchDataIndex, i-firstOccuranceOfMismatchDataIndex)
 			}
