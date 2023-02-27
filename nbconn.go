@@ -1,14 +1,6 @@
-// Package nbconn implements a non-blocking net.Conn wrapper.
-//
-// It is designed to solve three problems.
-//
-// The first is resolving the deadlock that can occur when both sides of a connection are blocked writing because all
-// buffers between are full. See https://github.com/jackc/pgconn/issues/27 for discussion.
-//
-// The second is the inability to use a write deadline with a TLS.Conn without killing the connection.
-//
-// The third is to efficiently check if a connection has been closed via a non-blocking read.
-package nbconn
+// dupreads is an extraction and reduction of github.com/jackc/pgx/internal/nbconn to demonstrate an apparent bug in Go
+// or Windows.
+package dupreads
 
 import (
 	"crypto/tls"

@@ -1,4 +1,4 @@
-package nbconn
+package dupreads
 
 import (
 	"sync"

@@ -1,4 +1,4 @@
-package nbconn_test
+package dupreads_test
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"dupreads/nbconn"
+	nbconn "dupreads"
 )
 
 // Test keys generated with:
