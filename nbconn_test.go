@@ -187,9 +187,6 @@ func TestRepeatedMessage(t *testing.T) {
 
 	const messageSize = 4 * 1024 * 1024
 	writeBuf := make([]byte, messageSize)
-	for i := range writeBuf {
-		writeBuf[i] = 1
-	}
 	n, err := clientConn.Write(writeBuf)
 	if err != nil {
 		t.Errorf("clientConn.Write failed: %v", err)
